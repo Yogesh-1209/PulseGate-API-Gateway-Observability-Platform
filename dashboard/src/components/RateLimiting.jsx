@@ -1,3 +1,9 @@
+/**
+ * RateLimiting — per-key quota bars + 429 event chart.
+ * Quota data is polled from /dashboard/rate-limits every 5 s (Redis).
+ * The 429 time-series comes from the same SSE bucket data as LiveTraffic.
+ */
+
 import { Shield, AlertTriangle } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -9,88 +15,121 @@ function fmtTime(ts) {
   return `${String(d.getMinutes()).padStart(2,"0")}:${String(d.getSeconds()).padStart(2,"0")}`;
 }
 
-const TooltipStyle = {
+const TT_STYLE = {
   contentStyle: {
-    background: "#161f30", border: "1px solid rgba(255,255,255,0.07)",
-    borderRadius: 8, fontSize: 12, color: "#e2e8f0",
+    background: "#131929",
+    border: "1px solid rgba(255,255,255,0.10)",
+    borderRadius: 6,
+    fontSize: 11,
+    color: "#d1d9e6",
+    padding: "7px 11px",
   },
 };
 
-export default function RateLimiting({ rateLimits, metrics, timeSeries }) {
-  const { quotas = [], rateLimitEvents = 0 } = rateLimits || {};
+const AXIS_PROPS = {
+  stroke: "transparent",
+  tick: { fill: "#4a5568", fontSize: 10 },
+};
 
-  // Build 429 events chart from time series
-  const rlChart = timeSeries.map((b) => ({
-    t:   fmtTime(b.timestamp),
-    rl:  b.rateLimit || 0,
-    req: b.requests  || 0,
+export default function RateLimiting({ rateLimits, timeSeries }) {
+  const { quotas = [], rateLimitEvents = 0, error } = rateLimits || {};
+
+  const rlChart = (timeSeries || []).map((b) => ({
+    t:  fmtTime(b.timestamp),
+    rl: b.rateLimit || 0,
   }));
+
+  const hasRlActivity = rlChart.some((d) => d.rl > 0);
 
   return (
     <div>
       <div className="section-header">
-        <h2 className="section-title"><Shield size={18} /> Rate Limiting</h2>
+        <div className="section-title">
+          <Shield size={13} />
+          Rate Limiting
+        </div>
+        {error && (
+          <span style={{ fontSize: 11, color: "var(--amber)", display: "flex", alignItems: "center", gap: 4 }}>
+            <AlertTriangle size={12} />
+            {error}
+          </span>
+        )}
       </div>
 
       <div className="rl-grid">
-        {/* ─ Quota bars ─ */}
+        {/* ─ Active quotas from Redis ─ */}
         <div className="card">
-          <div className="card-title"><Shield size={13} /> Active Quotas (Redis)</div>
+          <div className="card-label">
+            <Shield size={11} />
+            Active Quota Windows (Redis)
+          </div>
 
           {quotas.length === 0 ? (
-            <div className="empty-state" style={{ padding: "24px 0" }}>
-              <Shield size={28} style={{ opacity: 0.25, marginBottom: 8 }} />
-              <div>No active keys in Redis window.</div>
-              <div style={{ fontSize: 11, marginTop: 4 }}>Make requests to see quota usage.</div>
+            <div className="empty-state" style={{ padding: "20px 0" }}>
+              <Shield size={24} opacity={0.2} />
+              <span>No active windows — make requests to populate quota data.</span>
             </div>
           ) : (
             quotas.map((q) => {
-              const pct = Math.min((q.used / q.max) * 100, 100);
-              const isWarn = pct >= 80;
-              const isOver = q.used >= q.max;
+              const pct  = Math.min((q.used / q.max) * 100, 100);
+              const warn = pct >= 80;
+              const over = q.used >= q.max;
               return (
-                <div key={q.key} className="quota-item">
-                  <div className="quota-header">
+                <div key={q.key} className="quota-row">
+                  <div className="quota-meta">
                     <span className="quota-key" title={q.key}>{q.key}</span>
-                    <span className="quota-count" style={{ color: isOver ? "var(--red)" : isWarn ? "var(--amber)" : "var(--text-2)" }}>
+                    <span
+                      className="quota-count"
+                      style={{ color: over ? "var(--red)" : warn ? "var(--amber)" : "var(--text-2)" }}
+                    >
                       {q.used} / {q.max}
                     </span>
                   </div>
                   <div className="quota-bar">
                     <div
-                      className={`quota-fill ${isOver ? "over" : isWarn ? "warn" : ""}`}
+                      className={`quota-fill ${over ? "over" : warn ? "warn" : ""}`}
                       style={{ width: `${pct}%` }}
                     />
                   </div>
-                  <div className="quota-ttl">Resets in {q.ttl}s</div>
+                  <div className="quota-ttl">
+                    resets in {q.ttl}s · window: {q.window}s
+                  </div>
                 </div>
               );
             })
           )}
         </div>
 
-        {/* ─ 429 counter ─ */}
-        <div className="card" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          <div className="card-title"><AlertTriangle size={13} /> Rate Limit Events</div>
-
-          <div style={{ textAlign: "center", padding: "12px 0" }}>
-            <div className="rl-stat-val">{rateLimitEvents}</div>
-            <div className="rl-stat-label">Total HTTP 429 responses</div>
+        {/* ─ 429 events ─ */}
+        <div className="card" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div>
+            <div className="card-label">
+              <AlertTriangle size={11} />
+              HTTP 429 Events
+            </div>
+            <div className="rl-events-val">{rateLimitEvents}</div>
+            <div className="rl-events-label">Total rate-limit rejections</div>
           </div>
 
           <div>
-            <div style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em" }}>
-              429s per second (last 60s)
+            <div style={{ fontSize: 10, color: "var(--text-3)", marginBottom: 8, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.07em" }}>
+              429s per second · last 60s
             </div>
-            <ResponsiveContainer width="100%" height={130}>
-              <BarChart data={rlChart} margin={{ top: 2, right: 4, left: -28, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
-                <XAxis dataKey="t" stroke="#334155" tick={{ fill: "#64748b", fontSize: 9 }} interval="preserveStartEnd" />
-                <YAxis stroke="#334155" tick={{ fill: "#64748b", fontSize: 9 }} allowDecimals={false} />
-                <Tooltip {...TooltipStyle} formatter={(v) => [v, "429s"]} />
-                <Bar dataKey="rl" name="Rate Limited" fill="#f43f5e" radius={[2, 2, 0, 0]} maxBarSize={16} />
-              </BarChart>
-            </ResponsiveContainer>
+            {!hasRlActivity ? (
+              <div className="empty-state" style={{ padding: "16px 0", fontSize: 11 }}>
+                No 429s recorded in the current window.
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={110}>
+                <BarChart data={rlChart} margin={{ top: 2, right: 4, left: -30, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+                  <XAxis dataKey="t" {...AXIS_PROPS} interval="preserveStartEnd" />
+                  <YAxis {...AXIS_PROPS} allowDecimals={false} />
+                  <Tooltip {...TT_STYLE} formatter={(v) => [v, "Rate limited"]} />
+                  <Bar dataKey="rl" name="429s" fill="#f87171" radius={[2, 2, 0, 0]} maxBarSize={14} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
       </div>

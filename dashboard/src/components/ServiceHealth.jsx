@@ -1,73 +1,96 @@
-import { Heart, Server, Database, Users, Package } from "lucide-react";
+/**
+ * ServiceHealth — live health checks for gateway, Redis, users, products.
+ * Health data comes from SSE: the backend polls every 10 seconds.
+ * "Unknown" is the honest initial state before the first check arrives.
+ */
 
-const SERVICE_META = {
-  gateway:         { label: "API Gateway",      Icon: Server,   sub: "Node.js · Port 3000" },
-  redis:           { label: "Redis",            Icon: Database, sub: "Rate limit store"     },
-  usersService:    { label: "Users Service",    Icon: Users,    sub: "Node.js · Port 3001"  },
-  productsService: { label: "Products Service", Icon: Package,  sub: "Node.js · Port 3002"  },
+import { Server, Database, Users, Package } from "lucide-react";
+
+const META = {
+  gateway:         { label: "API Gateway",      sub: "Express · port 3000", Icon: Server   },
+  redis:           { label: "Redis",            sub: "Rate limit store",    Icon: Database  },
+  usersService:    { label: "Users Service",    sub: "Express · port 3001", Icon: Users    },
+  productsService: { label: "Products Service", sub: "Express · port 3002", Icon: Package  },
 };
 
 function StatusPill({ status }) {
-  const label = status === "healthy" ? "Healthy"
-              : status === "down"    ? "Down"
-              : status === "degraded" ? "Degraded"
-              : status === "timeout"  ? "Timeout"
-              : "Unknown";
+  const labels = {
+    healthy:  "Healthy",
+    down:     "Down",
+    degraded: "Degraded",
+    timeout:  "Timeout",
+    unknown:  "Unknown",
+  };
   return (
     <div className={`status-pill ${status || "unknown"}`}>
       <div className="status-pill-dot" />
-      {label}
+      {labels[status] || "Unknown"}
     </div>
   );
-}
-
-function fmtRT(rt) {
-  if (rt === null || rt === undefined) return "—";
-  return `${rt}ms`;
 }
 
 function fmtChecked(iso) {
   if (!iso) return "";
   const d = new Date(iso);
-  return `Checked at ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}:${String(d.getSeconds()).padStart(2,"0")}`;
+  return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}:${String(d.getSeconds()).padStart(2,"0")}`;
 }
 
 export default function ServiceHealth({ services }) {
   const entries = Object.entries(services || {}).filter(([k]) => k !== "checkedAt");
+  const checkedAt = services?.checkedAt;
 
   return (
     <div>
       <div className="section-header">
-        <h2 className="section-title"><Heart size={18} /> Service Health</h2>
-        <span style={{ fontSize: 11, color: "var(--text-3)" }}>
-          {services?.checkedAt ? fmtChecked(services.checkedAt) : "Waiting for first check…"}
+        <div className="section-title">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+          </svg>
+          Service Health
+        </div>
+        <span className="section-sub">
+          {checkedAt
+            ? `Last checked ${fmtChecked(checkedAt)} · updates every 10s`
+            : "Waiting for first health check…"}
         </span>
       </div>
 
       <div className="health-grid">
         {entries.map(([key, svc]) => {
-          const meta = SERVICE_META[key] || { label: svc.name, Icon: Server, sub: "" };
+          const meta   = META[key] || { label: svc?.name || key, sub: "", Icon: Server };
           const { Icon } = meta;
-          const status = svc.status || "unknown";
+          const status = svc?.status || "unknown";
+          const rt     = svc?.responseTime;
 
           return (
             <div key={key} className={`health-card ${status}`}>
-              <div className="health-card-header">
+              <div style={{ marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
+                <Icon size={14} color="var(--text-3)" />
                 <div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                    <Icon size={16} color="var(--accent)" />
-                    <span className="health-service-name">{meta.label}</span>
+                  <div className="health-name">{meta.label}</div>
+                  <div className="health-sub">{meta.sub}</div>
+                </div>
+              </div>
+
+              <div className="health-row">
+                <div>
+                  <div className="health-rt">
+                    {rt != null ? `${rt}ms` : "—"}
                   </div>
-                  <div className="health-service-sub">{meta.sub}</div>
+                  <div className="health-rt-label">Response time</div>
                 </div>
                 <StatusPill status={status} />
               </div>
-
-              <div className="health-rt">{fmtRT(svc.responseTime)}</div>
-              <div className="health-rt-label">Response time</div>
             </div>
           );
         })}
+
+        {entries.length === 0 && (
+          <div className="empty-state" style={{ gridColumn: "1 / -1" }}>
+            Connecting to gateway…
+          </div>
+        )}
       </div>
     </div>
   );
